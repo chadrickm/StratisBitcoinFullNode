@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -13,24 +12,21 @@ using Stratis.Bitcoin.Consensus;
 using Stratis.Bitcoin.Logging;
 using Stratis.Bitcoin.MemoryPool;
 using Stratis.Bitcoin.Miner;
-using Stratis.Bitcoin.RPC;
 using Stratis.Bitcoin.Utilities;
 
 namespace Stratis.StratisD
 {
 	public class Program
 	{
-		public static void Main(string[] args)
+        public static void Main(string[] args)
 		{
-			ILoggerFactory loggerFactory = new LoggerFactory()
-				.AddConsole(LogLevel.Trace, false);
-			Logs.Configure(loggerFactory);
+			Logs.Configure(Logs.GetLoggerFactory(args));
 
 			if (NodeSettings.PrintHelp(args, Network.StratisMain))
 				return;
 
 			var network = args.Contains("-testnet") ? InitStratisTest() : Network.StratisMain;
-			NodeSettings nodeSettings = NodeSettings.FromArguments(args, "stratis", network, ProtocolVersion.ALT_PROTOCOL_VERSION);
+			var nodeSettings = NodeSettings.FromArguments(args, "stratis", network, ProtocolVersion.ALT_PROTOCOL_VERSION);
 
 			// NOTES: running BTC and STRAT side by side is not possible yet as the flags for serialization are static
 
@@ -39,13 +35,43 @@ namespace Stratis.StratisD
 				.UseStratisConsensus()
 				.UseBlockStore()
 				.UseMempool()
+				.AddPowPosMining()
 				.Build();
 
-			// TODO: bring the logic out of IWebHost.Run()
-			node.Start();
-			Console.WriteLine("Press any key to stop");
-			Console.ReadLine();
-			node.Dispose();
+			Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(t =>
+			{
+				//TryStartPowMiner(args, node);
+				//TryStartPosMiner(args, node);
+			});
+
+		    node.Run();
+
+			
+		}
+
+		private static void TryStartPowMiner(string[] args, IFullNode node)
+		{
+			// mining can be called from either RPC or on start
+			// to manage the on strat we need to get an address to the mining code
+			var mine = args.FirstOrDefault(a => a.Contains("mine="));
+			if (mine != null)
+			{
+				// get the address to mine to
+				var addres = mine.Replace("mine=", string.Empty);
+				var pubkey = BitcoinAddress.Create(addres, node.Network);
+				node.Services.ServiceProvider.Service<PowMining>().Mine(pubkey.ScriptPubKey);
+			}
+		}
+
+		private static void TryStartPosMiner(string[] args, IFullNode node)
+		{
+			// mining can be called from either RPC or on start
+			// to manage the on strat we need to get an address to the mining code
+			var mine = args.FirstOrDefault(a => a.Contains("mine="));
+			if (mine != null)
+			{
+				node.Services.ServiceProvider.Service<PosMinting>().Mine(new PosMinting.WalletSecret() {WalletPassword = ""});
+			}
 		}
 
 		private static Network InitStratisTest()
@@ -87,10 +113,13 @@ namespace Stratis.StratisD
 				.SetBase58Bytes(Base58Type.ENCRYPTED_SECRET_KEY_NO_EC, new byte[] {0x01, 0x42})
 				.SetBase58Bytes(Base58Type.ENCRYPTED_SECRET_KEY_EC, new byte[] {0x01, 0x43})
 				.SetBase58Bytes(Base58Type.EXT_PUBLIC_KEY, new byte[] {(0x04), (0x88), (0xB2), (0x1E)})
-				.SetBase58Bytes(Base58Type.EXT_SECRET_KEY, new byte[] {(0x04), (0x88), (0xAD), (0xE4)});
+				.SetBase58Bytes(Base58Type.EXT_SECRET_KEY, new byte[] {(0x04), (0x88), (0xAD), (0xE4)})
+				.AddDNSSeeds(new[]
+				{
+					new DNSSeedData("stratisplatform.com", "testnode1.stratisplatform.com"), 
+				});
 
 			return builder.BuildAndRegister();
 		}
-
 	}
 }

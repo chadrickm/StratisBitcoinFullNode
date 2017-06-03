@@ -16,16 +16,22 @@ namespace Stratis.Bitcoin.Consensus
 		private readonly StakeChain stakeChain;
 		private readonly ConcurrentChain chain;
 		private readonly CoinView coinView;
+		private readonly PosConsensusOptions consensusOptions;
 
-		public PosConsensusValidator(StakeValidator stakeValidator, Network network, ConsensusOptions consensusOptions, 
+		public PosConsensusValidator(StakeValidator stakeValidator, Network network, 
 			StakeChain stakeChain, ConcurrentChain chain, CoinView coinView) 
-			: base(network, consensusOptions)
+			: base(network)
 		{
+			Guard.NotNull(network.Consensus.Option<PosConsensusOptions>(), nameof(network.Consensus.Options));
+
 			this.stakeValidator = stakeValidator;
 			this.stakeChain = stakeChain;
 			this.chain = chain;
 			this.coinView = coinView;
+			this.consensusOptions = network.Consensus.Option<PosConsensusOptions>();
 		}
+
+		public StakeValidator StakeValidator => this.stakeValidator;
 
 		public override void CheckBlockReward(ContextInformation context, Money nFees, ChainedBlock chainedBlock, Block block)
 		{
@@ -37,14 +43,14 @@ namespace Stratis.Bitcoin.Consensus
 				// reward does not exceed the consensus rules  
 
 				var stakeReward = block.Transactions[1].TotalOut - context.Stake.TotalCoinStakeValueIn;
-				var calcStakeReward = GetProofOfStakeReward(chainedBlock, nFees);
+				var calcStakeReward = nFees + GetProofOfStakeReward(chainedBlock.Height);
 
 				if (stakeReward > calcStakeReward)
 					ConsensusErrors.BadCoinstakeAmount.Throw();
 			}
 			else
 			{
-				var blockReward = GetProofOfWorkReward(chainedBlock, nFees);
+				var blockReward = nFees + GetProofOfWorkReward(chainedBlock.Height);
 				if (block.Transactions[0].TotalOut > blockReward)
 					ConsensusErrors.BadCoinbaseAmount.Throw();
 			}
@@ -56,8 +62,9 @@ namespace Stratis.Bitcoin.Consensus
 			this.CheckAndComputeStake(context);
 
 			base.ExecuteBlock(context, taskScheduler);
-			
-			this.stakeChain.Set(context.BlockResult.ChainedBlock.HashBlock, context.Stake.BlockStake);
+
+			// TODO: a temporary fix til this methods is fixed in NStratis
+			(this.stakeChain as StakeChainStore).Set(context.BlockResult.ChainedBlock, context.Stake.BlockStake);
 		}
 
 		public override void CheckBlock(ContextInformation context)
@@ -167,7 +174,7 @@ namespace Stratis.Bitcoin.Consensus
 
 		}
 
-		public const int STAKE_TIMESTAMP_MASK = 15;
+		public const uint STAKE_TIMESTAMP_MASK = 15;
 		// Check whether the coinstake timestamp meets protocol
 		public static bool CheckCoinStakeTimestamp(int nHeight, long nTimeBlock, long nTimeTx)
 		{
@@ -224,7 +231,7 @@ namespace Stratis.Bitcoin.Consensus
 
 			if (context.Stake.BlockStake.IsProofOfWork())
 			{
-				if (!context.BlockResult.Block.Header.CheckProofOfWork())
+				if (context.CheckPow && !context.BlockResult.Block.Header.CheckProofOfWork())
 					ConsensusErrors.HighHash.Throw();
 			}
 
@@ -271,28 +278,28 @@ namespace Stratis.Bitcoin.Consensus
 			this.stakeValidator.ComputeStakeModifier(chain, pindex, blockStake);
 		}
 
-		public Money GetProofOfWorkReward(ChainedBlock chainedBlock, long nFees)
+		public override Money GetProofOfWorkReward(int height)
 		{
-			if (this.IsPremine(chainedBlock))
-				return this.ConsensusOptions.PremineReward;
+			if (this.IsPremine(height))
+				return this.consensusOptions.PremineReward;
 
-			return this.ConsensusOptions.ProofOfWorkReward + nFees;
+			return this.ConsensusOptions.ProofOfWorkReward;
 		}
 
 		// miner's coin stake reward
-		public Money GetProofOfStakeReward(ChainedBlock chainedBlock, long nFees)
+		public Money GetProofOfStakeReward(int height)
 		{
-			if (this.IsPremine(chainedBlock))
-				return this.ConsensusOptions.PremineReward;
+			if (this.IsPremine(height))
+				return this.consensusOptions.PremineReward;
 
-			return this.ConsensusOptions.ProofOfStakeReward + nFees;
+			return this.consensusOptions.ProofOfStakeReward;
 		}
 
-		private bool IsPremine(ChainedBlock chainedBlock)
+		private bool IsPremine(int height)
 		{
-			return this.ConsensusOptions.PremineHeight > 0 &&
-			       this.ConsensusOptions.PremineReward > 0 &&
-			       chainedBlock.Height == this.ConsensusOptions.PremineHeight;
+			return this.consensusOptions.PremineHeight > 0 &&
+			       this.consensusOptions.PremineReward > 0 &&
+				   height == this.consensusOptions.PremineHeight;
 		}
 	}
 }

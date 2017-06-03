@@ -137,7 +137,7 @@ namespace Stratis.Bitcoin.Consensus
 						this.chain.SetTip(this.consensusLoop.Tip);
 						//Since ChainBehavior check PoW, MarkBlockInvalid can't be spammed
 						Logs.FullNode.LogError("Marking block as invalid");
-						this.chainState.MarkBlockInvalid(block.ChainedBlock.HashBlock);
+						this.chainState.MarkBlockInvalid(block.Block.GetHash());
 					}
 
 					if (!reorg && block.Error == null)
@@ -182,7 +182,10 @@ namespace Stratis.Bitcoin.Consensus
 				.AddFeature<ConsensusFeature>()
 				.FeatureServices(services =>
 				{
-					services.AddSingleton<ConsensusOptions, BitcoinConsensusOptions>();
+					// TODO: this should be set on the network build
+					fullNodeBuilder.Network.Consensus.Options = new PowConsensusOptions();
+
+					services.AddSingleton<NBitcoin.Consensus.ConsensusOptions, PowConsensusOptions>();
 					services.AddSingleton<PowConsensusValidator>();
 					services.AddSingleton<DBreezeCoinView>();
 					services.AddSingleton<CoinView, CachedCoinView>();
@@ -199,18 +202,25 @@ namespace Stratis.Bitcoin.Consensus
 			fullNodeBuilder.ConfigureFeature(features =>
 			{
 				features
-				.AddFeature<ConsensusFeature>()
-				.FeatureServices(services =>
-				{
-					services.AddSingleton<ConsensusOptions, StratisConsensusOptions>();
-					services.AddSingleton<PowConsensusValidator, PosConsensusValidator>();
-					services.AddSingleton<DBreezeCoinView>();
-					services.AddSingleton<CoinView, CachedCoinView>();
-					services.AddSingleton<LookaheadBlockPuller>();
-					services.AddSingleton<ConsensusLoop>();
-					services.AddSingleton<StakeChainStore>().AddSingleton<StakeChain, StakeChainStore>(provider => provider.GetService<StakeChainStore>());
-					services.AddSingleton<StakeValidator>();
-				});
+					.AddFeature<ConsensusFeature>()
+					.FeatureServices(services =>
+					{
+						fullNodeBuilder.Network.Consensus.Options = new PosConsensusOptions();
+
+						if (fullNodeBuilder.NodeSettings.Testnet)
+						{
+							fullNodeBuilder.Network.Consensus.Option<PosConsensusOptions>().COINBASE_MATURITY = 10;
+							fullNodeBuilder.Network.Consensus.Option<PosConsensusOptions>().StakeMinConfirmations = 10;
+						}
+
+						services.AddSingleton<PowConsensusValidator, PosConsensusValidator>();
+						services.AddSingleton<DBreezeCoinView>();
+						services.AddSingleton<CoinView, CachedCoinView>();
+						services.AddSingleton<LookaheadBlockPuller>();
+						services.AddSingleton<ConsensusLoop>();
+						services.AddSingleton<StakeChainStore>().AddSingleton<StakeChain, StakeChainStore>(provider => provider.GetService<StakeChainStore>());
+						services.AddSingleton<StakeValidator>();
+					});
 			});
 
 			return fullNodeBuilder;
